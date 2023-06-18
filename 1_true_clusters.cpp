@@ -154,6 +154,7 @@ void find_grandma ( TClonesArray* branchGenParticles, set<int>& grandmas ) {
 }
 
 #define PARENT_UNASSIGNED -5
+#define THIS_DOESNOTEXIST -6
 
 // TODO : try starting at the leaf nodes and going up till the grandma nodes (take M1 parent every time)
 // this has a problem if different grandmas can create one leaf node- check if this even happens tho
@@ -164,7 +165,9 @@ void find_true_clusters ( TClonesArray* branchGenParticles, vector<PseudoJet>& c
   clusters.reserve(grandmas.size());
   vector<set<int>> all_clusts(grandmas.size());
 
-  // cout << "genparticle num: " << branchGenParticles->GetEntriesFast() << endl;
+  cout << "genparticle num: " << (branchGenParticles->GetEntriesFast()+1) << "\n";
+  cout << "P\tM1\tM2\tD1\tD2" << "\n";
+
   vector<int> childof(branchGenParticles->GetEntriesFast());
   fill(childof.begin(), childof.end(), PARENT_UNASSIGNED);
 
@@ -172,53 +175,108 @@ void find_true_clusters ( TClonesArray* branchGenParticles, vector<PseudoJet>& c
 
   int grandma_idx = 0;
   for ( const int& grandma: grandmas ) {
+    cout << grandma << "\t_\t_\t";
+    GenParticle* parti = (GenParticle*) branchGenParticles->At(grandma);
+    assert(parti != NULL);
     childof[grandma] = grandma_idx++;
-    doable.push(grandma);
+    if ( parti->D1 != -1 ) {
+      if ( childof[parti->D1] == PARENT_UNASSIGNED )
+        doable.push(parti->D1);
+      cout << parti->D1;
+    }
+    cout << "\t";
+    if ( parti->D2 != -1 && parti->D1 != parti->D2 ){
+      if ( childof[parti->D2] == PARENT_UNASSIGNED )
+        doable.push(parti->D2);
+      cout << parti->D2;
+    }
+    cout << "\n";
   }
-  long long ctr = 0;
+
   while (not doable.empty()) {
-    ctr++;
 
     int current;
     current = doable.top(); doable.pop();
-    assert( childof[current] != PARENT_UNASSIGNED );
-
-    // cout << "::" << current << "\t";
+    cout << current << "\t";
     GenParticle* parti = (GenParticle*) branchGenParticles->At(current);
     assert(parti != NULL);
 
-    vector<int> children;
-    if ( parti->D1 != -1 )
-      children.push_back(parti->D1);
-    if ( parti->D2 != -1 && parti->D2 != parti->D1 )
-      children.push_back(parti->D2);
-
-    for ( int& child: children ) {
-      if ( childof[child] != childof[current] ) {
-        //  if childof[child] is PARENT_UNASSIGNED, then we are seeing it for
-        //  the first time. this can occur in case :
-        //    a)  it has only one parent.
-        //    b)  it has 2 parents, current is the first parent. the other has
-        //        not been seen yet.
-        //  either way, we hit the condition as childof[current] is asserted to
-        //  be assigned.
-        //
-        //  if childof[child] is assigned, then we hit the condition only when
-        //  childof[child] is not equal to childof[current]; then we are assured
-        //  that all the grandchildren have already been assigned the first
-        //  parent's value. so, now, we assign them the second parent's value.
-        doable.push(child);
-        childof[child] = childof[current];
-      }
+    int m1gm = THIS_DOESNOTEXIST, m2gm = THIS_DOESNOTEXIST;
+    if ( parti->M1 != -1 ) {
+      m1gm = childof[parti->M1];
+      cout << parti->M1;
     }
+    cout << "\t";
+    if ( parti->M2 != -1 ) {
+      m2gm = childof[parti->M2];
+      cout << parti->M2;
+    }
+    cout << "\t";
+    if ( parti->D1 != -1 ) {
+      cout << parti->D1;
+    }
+    cout << "\t";
+    if ( parti->D2 != -1 && parti->D1 != parti->D2 ) {
+      cout << parti->D2;
+    }
+    cout << "\t";
+
+    assert( m1gm != THIS_DOESNOTEXIST );
+    // ^ assumption that first parent must always exist (for non grandma particles)
+
+    if ( m2gm == THIS_DOESNOTEXIST ) {
+      // only one parent (M1) exists
+      assert(m1gm != PARENT_UNASSIGNED);
+      childof[current] = m1gm;
+      if ( parti->D1 != -1 )
+        if ( childof[parti->D1] == PARENT_UNASSIGNED )
+          doable.push(parti->D1);
+      if ( parti->D2 != -1 && parti->D1 != parti->D2 )
+        if ( childof[parti->D2] == PARENT_UNASSIGNED )
+          doable.push(parti->D2);
+    } else if ( m1gm != PARENT_UNASSIGNED && m2gm != PARENT_UNASSIGNED ) {
+      // both parents exist and both are assigned
+      if ( m1gm == m2gm ) {
+        // both parents are the same, use M1
+        childof[current] = m1gm;
+        if ( parti->D1 != -1 )
+          if ( childof[parti->D1] == PARENT_UNASSIGNED )
+            doable.push(parti->D1);
+        if ( parti->D2 != -1 && parti->D1 != parti->D2 )
+          if ( childof[parti->D2] == PARENT_UNASSIGNED )
+            doable.push(parti->D2);
+      } else {
+        // both parents are different, PANIC. use only M1 for now
+        cout << "panic: multi diff parents" << "\n";
+        childof[current] = m1gm;
+        if ( parti->D1 != -1 )
+          if ( childof[parti->D1] == PARENT_UNASSIGNED )
+            doable.push(parti->D1);
+        if ( parti->D2 != -1 && parti->D1 != parti->D2 )
+          if ( childof[parti->D2] == PARENT_UNASSIGNED )
+            doable.push(parti->D2);
+      }
+    } else if ( m1gm == PARENT_UNASSIGNED && m2gm == PARENT_UNASSIGNED ) {
+      // both parents exist and both are unassigned
+      cout << "panic: unassigned parents" << "\n";
+      exit(1);
+    } else {
+      // both parents exist but exactly one of them is unassigned
+      // childof for this index will only be assigned when both the parents are
+      // known. for now, skip.
+      cout << "\n";
+      continue;
+    }
+    cout << "\n";
 
     assert(childof[current] != PARENT_UNASSIGNED);
-    if ( children.empty() ) {
+    assert(childof[current] != THIS_DOESNOTEXIST);  // meaningless to check for
+                                                    // this. but ehh
+    if ( parti->D1 == -1 and parti->D2 == -1 ) {
       all_clusts[childof[current]].insert(current);
     }
   }
-  // NB : error in the root file: for some particles, ->D1->M1 and ->D1->M2
-  // neither of them are the particle itself.
+  // NB : error in the file: for some particles, ->D1->M1 and ->D1->M2 neither of them are the particle itself.
   // Dont know why this happens.
   // TODO : see why this happens
 
